@@ -1,0 +1,25 @@
+{
+  "name": "Speisekarten-Has – Landkreis Haßberge",
+  "short_name": "Speisekarten-Has",
+  "description": "Speisekarten aus dem Landkreis Haßberge ohne viel Mumpitz.",
+  "lang": "de",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#10101c",
+  "theme_color": "#1a1a2e",
+  "icons": [
+    {
+      "src": "icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}
