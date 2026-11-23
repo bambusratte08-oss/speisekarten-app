@@ -19,11 +19,24 @@ function norm(s) {
     .replace(/ß/g, "ss");
 }
 
+function mapsUrl(r, route) {
+  const q = encodeURIComponent(r.addr || [r.name, r.place || "Landkreis Haßberge"].join(" "));
+  return route
+    ? `https://www.google.com/maps/dir/?api=1&destination=${q}`
+    : `https://www.google.com/maps/search/?api=1&query=${q}`;
+}
+
+function prettyPhone(p) {
+  return p.replace(/^\+49/, "0 ")
+    .replace(/^0(\d{3,5})/, "0$1 ")
+    .replace(/(\d{3,})(\d{3,})(\d{2,})$/, "$1 $2 $3");
+}
+
 function matches(r) {
   if (state.onlyFavs && !state.favs.has(r.id)) return false;
   if (state.cat !== "alle" && r.cat !== state.cat) return false;
   if (state.query) {
-    const hay = norm([r.name, r.place, r.pages.map(p => p.label).join(" ")].join(" "));
+    const hay = norm([r.name, r.place, (r.addr || "")].join(" "));
     if (!hay.includes(state.query)) return false;
   }
   return true;
@@ -60,19 +73,28 @@ function renderChips() {
 function cardEl(r) {
   const el = document.createElement("article");
   el.className = "card";
+  const isNew = !!r.isNew;
   const first = r.pages[0];
-  const isImg = first.type !== "pdf";
+  let thumbHtml;
+  if (!r.pages.length) {
+    thumbHtml = `<div class="thumb-pdf">📋<br>folgt</div>`;
+  } else if (first.type === "pdf" || first.type === "web") {
+    thumbHtml = `<div class="thumb-pdf">📄<br>${first.type === "web" ? "Link" : "PDF"}</div>`;
+  } else {
+    thumbHtml = `<img loading="lazy" src="${first.url}" alt="Speisekarte ${r.name}">`;
+  }
   el.innerHTML = `
     <div class="thumb">
-      ${isImg
-        ? `<img loading="lazy" src="${first.url}" alt="Speisekarte ${r.name}">`
-        : `<div class="thumb-pdf">📄<br>PDF</div>`}
+      ${thumbHtml}
       <span class="badge-cat">${(CATEGORIES.find(c => c.id === r.cat) || {}).label || ""}</span>
+      ${isNew ? `<span class="badge-new">NEU</span>` : ""}
     </div>
     <div class="card-body">
       <h3>${r.name}</h3>
       ${r.place ? `<p class="place">📍 ${r.place}</p>` : `<p class="place">Landkreis Haßberge</p>`}
-      <p class="meta">${r.pages.length} ${r.pages.length === 1 ? "Karte" : "Karten"}</p>
+      <p class="meta">${r.pages.length
+        ? `${r.pages.length} ${r.pages.length === 1 ? "Karte" : "Karten"}`
+        : "Speisekarte folgt"}</p>
     </div>
     <button class="fav${state.favs.has(r.id) ? " on" : ""}" aria-label="Favorit">★</button>
   `;
@@ -102,11 +124,11 @@ function renderCards() {
 
 /* ---- Viewer ---- */
 let viewerRestaurant = null;
-let viewerPage = 0;
+let viewerIndex = 0; // pages index; last position = Info-Tab
 
 function openViewer(r) {
   viewerRestaurant = r;
-  viewerPage = 0;
+  viewerIndex = r.pages.length ? 0 : 1;
   buildViewer();
   $("#viewer").classList.add("open");
   document.body.style.overflow = "hidden";
@@ -118,26 +140,7 @@ function closeViewer() {
   $("#viewer-body").innerHTML = "";
 }
 
-function buildViewer() {
-  const r = viewerRestaurant;
-  if (!r) return;
-  const page = r.pages[viewerPage];
-  $("#viewer-title").textContent = r.name;
-  $("#viewer-sub").textContent =
-    (r.place ? r.place + " · " : "") + page.label;
-
-  const tabs = $("#viewer-tabs");
-  tabs.innerHTML = "";
-  if (r.pages.length > 1) {
-    r.pages.forEach((p, i) => {
-      const b = document.createElement("button");
-      b.className = "tab" + (i === viewerPage ? " active" : "");
-      b.textContent = p.label;
-      b.addEventListener("click", () => { viewerPage = i; buildViewer(); });
-      tabs.appendChild(b);
-    });
-  }
-
+function buildBodyPage(page) {
   const body = $("#viewer-body");
   body.innerHTML = "";
   body.style.zoom = "1";
@@ -150,12 +153,86 @@ function buildViewer() {
       <a class="btn" href="${page.url}" target="_blank" rel="noopener">PDF öffnen ↗</a>
     `;
     body.appendChild(wrap);
+  } else if (page.type === "web") {
+    const wrap = document.createElement("div");
+    wrap.className = "pdf-wrap";
+    wrap.innerHTML = `
+      <p>Diese Karte liegt auf einer externen Seite.</p>
+      <a class="btn" href="${page.url}" target="_blank" rel="noopener">Karte öffnen ↗</a>
+    `;
+    body.appendChild(wrap);
   } else {
     const img = document.createElement("img");
     img.src = page.url;
-    img.alt = `Speisekarte ${r.name} – ${page.label}`;
+    img.alt = `Speisekarte ${viewerRestaurant.name} – ${page.label}`;
     body.appendChild(img);
   }
+}
+
+function buildBodyInfo() {
+  const r = viewerRestaurant;
+  const body = $("#viewer-body");
+  body.innerHTML = "";
+  body.style.zoom = "1";
+  const wrap = document.createElement("div");
+  wrap.className = "info-panel";
+
+  const cat = CATEGORIES.find(c => c.id === r.cat);
+  let html = `<h3>${cat ? cat.label + " · " : ""}Info &amp; Anfahrt</h3>`;
+  if (!r.pages.length) html += `<p class="note">Für dieses Lokal gibt es bisher keine Speisekarte – die Sammlung wird laufend ergänzt.</p>`;
+
+  if (r.hours && r.hours.length) {
+    html += `<h4>🕐 Öffnungszeiten</h4><ul>${r.hours.map(h => `<li>${h}</li>`).join("")}</ul>`;
+  } else {
+    html += `<h4>🕐 Öffnungszeiten</h4>
+      <p class="note">Keine verlässlichen Daten vorhanden – die aktuellen Zeiten findest du auf Google Maps.</p>`;
+  }
+
+  if (r.phone) {
+    html += `<a class="btn wide" href="tel:${r.phone}">📞 Anrufen: ${prettyPhone(r.phone)}</a>`;
+  }
+
+  html += `
+    <div class="btn-row">
+      <a class="btn wide" href="${mapsUrl(r)}" target="_blank" rel="noopener">🗺️ Auf Karte ansehen</a>
+      <a class="btn wide" href="${mapsUrl(r, true)}" target="_blank" rel="noopener">🧭 Route starten</a>
+    </div>
+    <p class="note small">Adresse/Routing: Google Maps · Öffnungszeiten ohne Gewähr.</p>
+  `;
+  wrap.innerHTML = html;
+  body.appendChild(wrap);
+}
+
+function buildViewer() {
+  const r = viewerRestaurant;
+  if (!r) return;
+  const infoIndex = r.pages.length;
+  const isInfo = viewerIndex === infoIndex;
+  const page = r.pages[viewerIndex];
+
+  $("#viewer-title").textContent = r.name;
+  $("#viewer-sub").textContent = isInfo
+    ? ((r.place ? r.place + " · " : "") + "Info & Anfahrt")
+    : ((r.place ? r.place + " · " : "") + page.label);
+
+  const tabs = $("#viewer-tabs");
+  tabs.innerHTML = "";
+  r.pages.forEach((p, i) => {
+    const b = document.createElement("button");
+    b.className = "tab" + (!isInfo && i === viewerIndex ? " active" : "");
+    b.textContent = p.label;
+    b.addEventListener("click", () => { viewerIndex = i; buildViewer(); });
+    tabs.appendChild(b);
+  });
+  const ib = document.createElement("button");
+  ib.className = "tab tab-info" + (isInfo ? " active" : "");
+  ib.textContent = "ℹ️ Info";
+  ib.addEventListener("click", () => { viewerIndex = infoIndex; buildViewer(); });
+  tabs.appendChild(ib);
+  $("#zoom-row").style.display = isInfo ? "none" : "flex";
+
+  if (isInfo) buildBodyInfo();
+  else buildBodyPage(page);
 }
 
 $("#zoom-in").addEventListener("click", () => zb(0.25));
